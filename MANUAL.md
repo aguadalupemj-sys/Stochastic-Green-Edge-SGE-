@@ -1,0 +1,186 @@
+# Manual del Proyecto — Stochastic Green Edge (SGE)
+
+> Este manual describe **en qué consiste el proyecto**, su propósito, su
+> arquitectura conceptual y cómo se organiza el trabajo. Como el repositorio
+> parte de una base mínima (solo el `README`), este documento sirve como guía
+> de referencia y punto de partida para el desarrollo.
+
+---
+
+## 1. ¿Qué es SGE?
+
+**Stochastic Green Edge (SGE)** es un proyecto centrado en la **gestión eficiente
+de energía en computación en el borde (edge computing) mediante métodos
+estocásticos**.
+
+El nombre resume las tres ideas clave del proyecto:
+
+| Término        | Significado dentro del proyecto |
+|----------------|---------------------------------|
+| **Stochastic** | Se usan modelos y algoritmos que trabajan con **incertidumbre y aleatoriedad** (demanda variable, generación renovable intermitente, cargas de trabajo impredecibles). |
+| **Green**      | El objetivo es **reducir el consumo energético y la huella de carbono**, priorizando el uso de energía renovable. |
+| **Edge**       | Todo se aplica sobre **nodos de borde** (dispositivos, micro–centros de datos y pasarelas cercanas al usuario) en lugar de la nube centralizada. |
+
+En una frase: **SGE decide cómo y cuándo ejecutar tareas en nodos de borde para
+minimizar el consumo energético, aprovechando la energía verde disponible y
+tomando decisiones robustas frente a la incertidumbre.**
+
+---
+
+## 2. Objetivos del proyecto
+
+1. **Minimizar el consumo energético** de una red de nodos de borde.
+2. **Maximizar el uso de energía renovable** (solar, eólica) frente a la energía de red.
+3. **Cumplir los requisitos de servicio** (latencia, tiempo de respuesta, calidad).
+4. **Tomar decisiones robustas** bajo incertidumbre usando optimización estocástica.
+5. **Ser reproducible**: experimentos, datos y resultados documentados.
+
+---
+
+## 3. ¿Qué problema resuelve?
+
+En un sistema de computación en el borde tenemos:
+
+- **Tareas/peticiones** que llegan de forma impredecible.
+- **Nodos** con distinta capacidad de cómputo y consumo energético.
+- **Fuentes de energía** (red eléctrica + renovables) con disponibilidad variable.
+- **Restricciones** de latencia, energía disponible y capacidad.
+
+La pregunta central es:
+
+> ¿A qué nodo y en qué momento asignamos cada tarea para gastar la **menor
+> cantidad de energía "sucia"** posible, sin incumplir los objetivos de servicio,
+> aun cuando **no conocemos con certeza** la demanda futura ni la generación
+> renovable?
+
+SGE responde esta pregunta con **modelos de decisión bajo incertidumbre**.
+
+---
+
+## 4. Arquitectura conceptual
+
+```
+        ┌─────────────────────────────────────────────┐
+        │                Capa de decisión              │
+        │   (Optimizador estocástico / política SGE)   │
+        └───────────────┬───────────────┬─────────────┘
+                        │               │
+             asignación │               │ señales de energía
+                        ▼               ▼
+   ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+   │   Nodo Edge 1 │  │   Nodo Edge 2 │  │   Nodo Edge N │
+   │  CPU / batería│  │  CPU / batería│  │  CPU / batería│
+   │  panel solar  │  │  red eléctrica│  │  eólica       │
+   └───────────────┘  └───────────────┘  └───────────────┘
+                        ▲
+                        │  tareas / peticiones
+                ┌───────┴────────┐
+                │   Usuarios /    │
+                │  sensores / IoT │
+                └─────────────────┘
+```
+
+### Componentes principales
+
+1. **Generador de escenarios (Stochastic)**
+   - Modela la incertidumbre: llegada de tareas, generación renovable, precio de la energía.
+   - Produce escenarios de muestra para la optimización.
+
+2. **Modelo de energía (Green)**
+   - Calcula el consumo por nodo y tarea.
+   - Distingue energía renovable vs. energía de red (huella de carbono).
+
+3. **Optimizador / política de asignación (Edge)**
+   - Decide dónde y cuándo ejecutar cada tarea.
+   - Puede basarse en programación estocástica, aprendizaje por refuerzo u
+     heurísticas robustas.
+
+4. **Simulador / entorno de evaluación**
+   - Reproduce la operación de la red de borde para medir resultados.
+
+5. **Métricas y reportes**
+   - Energía total, % renovable, latencia, tareas cumplidas, coste, CO₂.
+
+---
+
+## 5. Estructura de carpetas propuesta
+
+Como el proyecto está en fase inicial, esta es la estructura recomendada para
+organizar el desarrollo:
+
+```
+Stochastic-Green-Edge-SGE-/
+├── README.md              # Descripción breve
+├── MANUAL.md              # Este documento
+├── data/                  # Datos de entrada (demanda, generación renovable)
+├── src/
+│   ├── scenarios/         # Generación de escenarios estocásticos
+│   ├── energy/            # Modelo energético (green)
+│   ├── optimizer/         # Políticas y algoritmos de asignación
+│   └── simulator/         # Entorno de simulación edge
+├── experiments/           # Configuraciones y scripts de experimentos
+├── results/               # Salidas, gráficas y métricas
+├── tests/                 # Pruebas automáticas
+└── docs/                  # Documentación adicional
+```
+
+---
+
+## 6. Flujo de trabajo típico
+
+1. **Preparar datos**: trazas de demanda y de generación renovable en `data/`.
+2. **Generar escenarios** estocásticos que representen la incertidumbre.
+3. **Definir el modelo energético** de cada nodo.
+4. **Ejecutar el optimizador** para obtener la política de asignación.
+5. **Simular** la operación con esa política.
+6. **Evaluar métricas** (energía, % verde, latencia, CO₂) en `results/`.
+7. **Comparar** distintas estrategias y documentar conclusiones.
+
+---
+
+## 7. Métricas clave
+
+- **Energía total consumida** (kWh).
+- **Porcentaje de energía renovable** utilizada.
+- **Emisiones de CO₂** evitadas frente a una línea base.
+- **Latencia media** y **latencia p95** de las tareas.
+- **Tasa de cumplimiento** de objetivos de servicio (SLA).
+- **Coste económico** de la energía.
+
+---
+
+## 8. Cómo contribuir
+
+1. Crea una rama con el prefijo `cursor/` o `feature/`.
+2. Haz commits pequeños y descriptivos.
+3. Añade pruebas cuando incorpores lógica nueva.
+4. Actualiza este manual si cambias el alcance o la arquitectura.
+5. Abre un Pull Request describiendo el cambio.
+
+---
+
+## 9. Estado actual
+
+- [x] Repositorio inicializado.
+- [x] Manual del proyecto (este documento).
+- [ ] Definición formal del modelo de energía.
+- [ ] Generador de escenarios estocásticos.
+- [ ] Optimizador / política de asignación.
+- [ ] Simulador de la red de borde.
+- [ ] Conjunto de experimentos reproducibles.
+
+---
+
+## 10. Glosario
+
+- **Edge computing**: procesar datos cerca de donde se generan, en vez de en la nube.
+- **Optimización estocástica**: técnicas para decidir bajo incertidumbre.
+- **Energía verde**: energía procedente de fuentes renovables.
+- **SLA**: acuerdo de nivel de servicio (p. ej. latencia máxima permitida).
+- **Escenario**: una posible realización de las variables inciertas.
+
+---
+
+> **Nota**: este manual define la visión y la estructura del proyecto a partir de
+> su nombre y objetivo. A medida que se añada código, conviene mantenerlo
+> actualizado para que siga reflejando fielmente el estado real del sistema.
