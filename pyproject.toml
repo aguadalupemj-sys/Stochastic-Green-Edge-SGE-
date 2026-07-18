@@ -1,0 +1,28 @@
+[project]
+name = "stochastic-green-edge"
+version = "0.1.0"
+description = "Defensa Adaptativa para APIs basada en el Borde (Edge) y Teoria de Juegos (Green Computing)."
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "ruff>=0.5", "matplotlib>=3.7"]
+
+[tool.setuptools]
+packages = ["sge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Los imports tras configurar sys.path y el backend de matplotlib son intencionales.
+"paper/run_experiments.py" = ["E402"]

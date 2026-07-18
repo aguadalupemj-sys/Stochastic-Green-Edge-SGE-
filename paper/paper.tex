@@ -1,0 +1,395 @@
+\documentclass[10pt,twocolumn]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage[hidelinks]{hyperref}
+
+% Terminos en espanol sin depender de babel-spanish
+\renewcommand{\abstractname}{Resumen}
+\renewcommand{\figurename}{Figura}
+\renewcommand{\tablename}{Tabla}
+\renewcommand{\refname}{Referencias}
+
+\captionsetup{font=small,labelfont=bf}
+\setlength{\parskip}{2pt}
+
+\title{\vspace{-1.2em}\textbf{Stochastic Green Edge (SGE): Defensa Adaptativa de APIs\\
+en el Borde mediante Modelado Estoc\'astico y C\'omputo Verde}}
+\author{Equipo \emph{Stochastic Green Edge} (SGE)\\
+\small Investigaci\'on en Ciberseguridad Cloud y Computaci\'on Sostenible}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent La inspecci\'on est\'atica y exhaustiva del $100\%$ del tr\'afico
+entrante hacia una API p\'ublica maximiza la detecci\'on de amenazas pero impone un
+consumo energ\'etico elevado y constante, en tensi\'on directa con los principios de
+la computaci\'on sostenible. Este art\'iculo presenta \textbf{Stochastic Green Edge}
+(SGE), un mecanismo de defensa perimetral de dos capas ---un filtro \emph{Edge}
+ligero y una funci\'on \emph{Serverless} de inspecci\'on profunda--- que decide de
+forma adaptativa, petici\'on a petici\'on, cu\'ando activar la inspecci\'on costosa.
+La decisi\'on se formula como un juego estoc\'astico no cooperativo con informaci\'on
+imperfecta entre un Defensor y un Atacante, y se resuelve calculando el equilibrio de
+Nash en estrategias mixtas \cite{alpcan,manshaei}. En una simulaci\'on de $2{,}000$
+peticiones (semilla $7$) con una mezcla realista ($80\%$ leg\'itimo, $15\%$ bots
+ruidosos, $5\%$ ataques dirigidos), SGE alcanza una \textbf{mitigaci\'on global del
+$94.38\%$} ---bloqueando el $100\%$ de los ataques ligeros y entre $\sim\!79\%$ y
+$\sim\!88\%$ de los avanzados--- consumiendo un \textbf{$85.9\%$ menos de energ\'ia}
+que la inspecci\'on est\'atica total. La eficiencia proviene de que el $80\%$ del
+tr\'afico leg\'itimo permanece en el costo m\'inimo del Edge ($C_{\text{edge}}=1$),
+evitando invocar la capa Serverless. La implementaci\'on es modular, verificada con
+\texttt{Ruff} y con $13$ pruebas en \texttt{Pytest}.
+
+\vspace{4pt}
+\noindent\textbf{Palabras clave:} juegos estoc\'asticos, equilibrio de Nash,
+seguridad de APIs, edge computing, serverless, c\'omputo verde, eficiencia
+energ\'etica.
+\end{abstract}
+
+\section{Introducci\'on}
+Las APIs p\'ublicas reciben tr\'afico heterog\'eneo que combina usuarios
+leg\'itimos, bots automatizados ruidosos y adversarios dirigidos y sigilosos. La
+pr\'actica de seguridad predominante ---someter cada petici\'on a una inspecci\'on
+profunda: sanitizaci\'on exhaustiva, validaci\'on criptogr\'afica y an\'alisis de
+payload--- ofrece m\'axima cobertura, pero incurre en un gasto de CPU y energ\'ia
+elevado e \emph{invariante}, con independencia del riesgo real de cada petici\'on.
+Este sobreprocesamiento tiene un impacto ambiental oculto pero significativo en los
+centros de datos, cuya reducci\'on es un objetivo central del c\'omputo verde
+\cite{radu,murugesan}.
+
+La observaci\'on que motiva este trabajo es que la mayor parte del tr\'afico no
+justifica el costo de la inspecci\'on profunda: el tr\'afico leg\'itimo debe
+servirse con energ\'ia m\'inima y los bots ruidosos pueden frenarse de forma barata
+en el borde mediante \emph{rate-limiting}. \'Unicamente una fracci\'on peque\~na y
+sigilosa ---ataques dirigidos que imitan tr\'afico leg\'itimo--- requiere
+efectivamente la capa costosa. El obst\'aculo es que esa fracci\'on \textbf{no es
+directamente observable}: el defensor act\'ua bajo \emph{informaci\'on imperfecta}.
+
+La computaci\'on sin servidor (\emph{serverless}) hace este compromiso a\'un m\'as
+expl\'icito: sus funciones ef\'imeras solo consumen recursos cuando se invocan, pero
+sufren una penalizaci\'on de \emph{arranque en fr\'io} (\emph{cold start}) cuando se
+activan tras un periodo de inactividad \cite{castro}. Ello convierte la decisi\'on de
+``inspeccionar o no'' en un problema de asignaci\'on de recursos con costos
+asim\'etricos, natural para un tratamiento por teor\'ia de juegos \cite{alpcan}.
+
+Proponemos modelar la decisi\'on de escalado como un juego no cooperativo entre el
+Defensor y el Atacante y resolver el equilibrio de Nash en estrategias mixtas,
+obteniendo una pol\'itica de escalado \emph{aleatorizada} \'optima en el sentido de
+que ninguna de las partes puede mejorar su utilidad esperada desvi\'andose
+unilateralmente \cite{manshaei}. Nuestras contribuciones son:
+\begin{itemize}\itemsep2pt
+  \item Una formulaci\'on anal\'itica de la defensa perimetral como un juego bimatriz
+        $2\times2$ con una funci\'on de utilidad que integra recompensa de
+        seguridad, costo energ\'etico y da\~no esperado.
+  \item Un motor que calcula el equilibrio de Nash en estrategias mixtas y traduce el
+        \emph{principio de indiferencia} en una regla que balancea Joules y
+        seguridad.
+  \item Una evaluaci\'on emp\'irica reproducible que cuantifica el compromiso frente
+        a l\'ineas base y explica anal\'iticamente el origen del ahorro energ\'etico.
+\end{itemize}
+
+\section{Formulaci\'on Matem\'atica y Modelo del Juego}
+\label{sec:math}
+Modelamos cada petici\'on \emph{sospechosa} como una etapa de un juego estoc\'astico
+no cooperativo entre dos jugadores racionales \cite{alpcan}. Al no observar el
+defensor la naturaleza real de la petici\'on, el juego es de informaci\'on imperfecta
+y, como veremos, carece de equilibrio en estrategias puras, por lo que la soluci\'on
+natural es un equilibrio en estrategias mixtas \cite{manshaei}.
+
+\subsection{Jugadores, acciones y utilidad}
+El \textbf{Defensor} dispone de dos estrategias puras: $D_V$ (\emph{Verde},
+permanecer en la capa Edge, energ\'ia m\'inima) y $D_A$ (\emph{Activa}, escalar a la
+inspecci\'on Serverless). El \textbf{Atacante} elige entre $A_L$ (ataque
+\emph{ligero}, ruidoso y autom\'atico) y $A_M$ (ataque \emph{avanzado}, dirigido y
+sigiloso). El Defensor juega $D_V$ con probabilidad $p$ y $D_A$ con probabilidad
+$1-p$; el Atacante juega $A_L$ con probabilidad $q$ y $A_M$ con $1-q$.
+
+La utilidad del Defensor ante el par de acciones $(a,d)$ se define como
+\begin{equation}
+\label{eq:util}
+U_D(a,d) = \alpha\, R(a,d) \;-\; \beta\, C_{\text{energy}}(d) \;-\; \gamma\, C_{\text{damage}}(a,d),
+\end{equation}
+donde cada t\'ermino tiene una interpretaci\'on precisa:
+\begin{itemize}\itemsep2pt
+  \item $R(a,d)$: \emph{recompensa} por una detecci\'on exitosa o por procesar
+        tr\'afico leg\'itimo con energ\'ia m\'inima.
+  \item $C_{\text{energy}}(d)$: \emph{costo energ\'etico} de la acci\'on defensiva,
+        medido en unidades relativas de Joules/ciclos \cite{murugesan}. Siguiendo el
+        modelo de costos serverless \cite{castro}, fijamos
+        $C_{\text{edge}}=1$, $C_{\text{exec}}=15$ (ejecuci\'on tibia) y
+        $C_{\text{cold}}=25$ (arranque en fr\'io).
+  \item $C_{\text{damage}}(a,d)$: \emph{penalizaci\'on por da\~no}, severa cuando un
+        ataque avanzado $A_M$ evade la seguridad por permanecer el Defensor en el
+        borde ($D_V$).
+  \item $\alpha,\beta,\gamma \ge 0$: pesos de ponderaci\'on que fijan la
+        importancia relativa de seguridad, energ\'ia y da\~no.
+\end{itemize}
+La ecuaci\'on~\eqref{eq:util} expresa formalmente el dilema de dise\~no: el segundo
+t\'ermino penaliza gastar energ\'ia, mientras que el tercero penaliza no gastarla
+cuando habr\'ia sido necesario. El equilibrio de Nash resolver\'a esta tensi\'on de
+manera \'optima.
+
+\subsection{Sospecha e informaci\'on imperfecta}
+El Defensor no observa la clase real de la petici\'on; solo infiere una
+\emph{puntuaci\'on de sospecha} $s\in[0,1]$ a partir de m\'etricas ligeras del Edge,
+con la anomal\'ia de payload como se\~nal dominante (es lo \'unico que la inspecci\'on
+profunda puede resolver):
+\begin{equation}
+s = 0.15\,\phi_{\text{ip}} + 0.15\,\phi_{\text{ua}} + 0.70\,\phi_{\text{payload}},
+\end{equation}
+con $\phi_{\text{ip}}=1-e^{-\text{freq}/6}$ la saturaci\'on de la frecuencia de IP.
+La sospecha modula el riesgo $\rho = s_0 + (1-s_0)\,s$ (piso $s_0=0.15$) y con \'el la
+severidad del da\~no $C_{\text{damage}}=D_0\,\rho$ y la ganancia de brecha del
+atacante. As\'i, el juego ---y su equilibrio--- es \emph{espec\'ifico de cada
+petici\'on}, capturando la naturaleza estoc\'astica del entorno \cite{alpcan}.
+
+\subsection{Matrices de pago}
+Con los par\'ametros del prototipo ($\alpha=\beta=\gamma=1$, $R_{\text{edge}}=10$,
+$R_{\text{deep}}=12$, $D_0=140$, ganancia de brecha $G_0=200$, costo de ataque
+avanzado $K=20$ y penalizaciones de detecci\'on $5$ y $15$), las entradas de la
+matriz del Defensor $\mathbf{A}$ (filas $D_V,D_A$; columnas $A_L,A_M$) son
+\begin{align}
+A_{D_V,A_L} &= \alpha R_{\text{edge}} - \beta C_{\text{edge}}, \\
+A_{D_V,A_M} &= -\,\beta C_{\text{edge}} - \gamma C_{\text{damage}}, \\
+A_{D_A,\cdot} &= \alpha R_{\text{deep}} - \beta C_{\text{serverless}}.
+\end{align}
+Esta estructura es de tipo \emph{matching pennies}: el Defensor prefiere $D_V$ ante
+$A_L$ (bloqueo barato) pero $D_A$ ante $A_M$ (evita la brecha), mientras que el
+Atacante prefiere $A_M$ ante $D_V$ pero $A_L$ ante $D_A$. En consecuencia \emph{no
+existe equilibrio en estrategias puras} y la soluci\'on es un equilibrio
+completamente mixto \cite{manshaei}.
+
+\subsection{El principio de indiferencia: balanceando Joules y seguridad}
+\label{sec:indiff}
+En un juego bimatriz $2\times2$ sin equilibrio puro, el equilibrio mixto se obtiene
+mediante el \emph{principio de indiferencia}: cada jugador aleatoriza de modo que su
+rival quede \emph{indiferente} entre sus dos acciones. Analicemos la condici\'on de
+indiferencia del \emph{Defensor}, pues es la que revela c\'omo se equilibran los
+Joules y la seguridad. El Atacante elige $q$ tal que la utilidad esperada del
+Defensor sea igual jugando $D_V$ o $D_A$:
+\begin{equation}
+\label{eq:balance}
+\underbrace{q\,A_{D_V,A_L} + (1-q)A_{D_V,A_M}}_{\mathbb{E}[U_D\mid D_V]}
+=
+\underbrace{A_{D_A,\cdot}}_{\mathbb{E}[U_D\mid D_A]}.
+\end{equation}
+Sustituyendo~\eqref{eq:util} y reordenando, la igualdad~\eqref{eq:balance} equivale a
+\begin{equation}
+\label{eq:tradeoff}
+\underbrace{\beta\big(C_{\text{serverless}}-C_{\text{edge}}\big)}_{\text{sobrecosto energ\'etico de inspeccionar}}
+=
+\underbrace{\gamma\,(1-q)\,C_{\text{damage}} + \Delta R}_{\text{da\~no evitado + ganancia de detecci\'on}},
+\end{equation}
+donde $\Delta R = \alpha\big(R_{\text{deep}} - q R_{\text{edge}}\big)$. La
+ecuaci\'on~\eqref{eq:tradeoff} es el n\'ucleo anal\'itico de SGE: en el equilibrio, el
+\textbf{sobrecosto energ\'etico} de activar la capa Serverless (lado izquierdo,
+$\beta\,\Delta C$ Joules) queda \emph{exactamente compensado} por el \textbf{da\~no
+esperado que se evita} m\'as la ganancia por detecci\'on (lado derecho). El Defensor
+no ``sobre-inspecciona'' (gastar\'ia Joules sin retorno de seguridad) ni
+``sub-inspecciona'' (aceptar\'ia da\~no evitable): el equilibrio de Nash fija el punto
+exacto en que el Joule marginal invertido iguala a la seguridad marginal obtenida.
+
+Sim\'etricamente, la probabilidad $p$ con que el Defensor juega $D_V$ se fija para
+hacer indiferente al \emph{Atacante}:
+\begin{equation}
+\label{eq:p}
+p = \frac{B_{D_A,A_M}-B_{D_A,A_L}}{(B_{D_V,A_L}-B_{D_A,A_L})-(B_{D_V,A_M}-B_{D_A,A_M})},
+\end{equation}
+siendo $\mathbf{B}$ la matriz de pagos del Atacante. Es notable que $p$ dependa de la
+matriz del Atacante: es el \emph{incentivo del adversario} ---no la mera aversi\'on al
+riesgo del defensor--- lo que determina la tasa \'optima de aleatorizaci\'on, un
+resultado consistente con la literatura de juegos de seguridad \cite{alpcan,manshaei}.
+
+\paragraph{Ejemplo resuelto.} Para una petici\'on con alta anomal\'ia de payload
+($s=0.712$), las matrices son
+\[
+\mathbf{A}=\begin{pmatrix} 9.00 & -106.73\\ -3.00 & -3.00 \end{pmatrix},\quad
+\mathbf{B}=\begin{pmatrix} -5.00 & 131.04\\ -5.00 & -35.00 \end{pmatrix}.
+\]
+Aplicando~\eqref{eq:p} y su an\'aloga para $q$ se obtiene el equilibrio mixto
+$p=0.181$ y $q=0.896$: el Defensor \textbf{escala a Serverless con probabilidad
+$1-p=0.819$}, concentrando la energ\'ia en el tr\'afico de alto riesgo. La
+Figura~\ref{fig:response} muestra c\'omo la probabilidad de escalado crece
+mon\'otonamente con la sospecha, materializando la regla anal\'itica
+de~\eqref{eq:tradeoff}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/fig3_response.png}
+\caption{Respuesta del equilibrio de Nash: probabilidad de escalar a Serverless
+($1-p$) frente a la puntuaci\'on de sospecha $s$. El escalado es despreciable para
+tr\'afico benigno y crece con la anomal\'ia del payload.}
+\label{fig:response}
+\end{figure}
+
+\section{Arquitectura del Sistema}
+\label{sec:arch}
+SGE simula dos capas de infraestructura cloud con costos energ\'eticos asim\'etricos.
+
+\paragraph{Capa Edge (filtro ligero).} Funci\'on de paso r\'apido con costo
+$C_{\text{edge}}=1$. Extrae m\'etricas baratas de la petici\'on ---frecuencia de la
+IP de origen, tama\~no del payload y anomal\'ia del \emph{User-Agent}--- y ejecuta el
+\emph{cerebro matem\'atico} (el motor de Nash de la Secci\'on~\ref{sec:math}). Aplica
+adem\'as \emph{rate-limiting} que frena los bots ruidosos (alta frecuencia de IP y
+firma de agente an\'omala) sin invocar la capa costosa. Los ataques avanzados imitan
+tr\'afico leg\'itimo y \emph{no} son detenidos aqu\'i.
+
+\paragraph{Capa Serverless (inspecci\'on profunda).} Funci\'on ef\'imera que realiza
+sanitizaci\'on exhaustiva y validaci\'on criptogr\'afica del payload. Permanece
+inactiva salvo que el modelo decida activarla. Su costo de ejecuci\'on es
+$C_{\text{exec}}=15$ y, tras un periodo de inactividad, incurre en \emph{cold start}
+con costo $C_{\text{cold}}=25$ \cite{castro}. Al invocarse, detecta de forma fiable
+cualquier clase de ataque. La relaci\'on de costos
+$C_{\text{edge}}:C_{\text{exec}}:C_{\text{cold}} = 1:15:25$ refleja el elevado
+sobrecoste energ\'etico de la inspecci\'on profunda, cuya cuantificaci\'on en Joules
+es central para el ecodise\~no de software \cite{murugesan,radu}.
+
+\section{Metodolog\'ia y Resultados}
+\label{sec:results}
+\subsection{Dise\~no experimental}
+Simulamos un flujo constante de $n=2{,}000$ peticiones (semilla $7$) con la mezcla
+$80\%$ usuarios leg\'itimos, $15\%$ bots ruidosos ($A_L$) y $5\%$ hackers dirigidos
+($A_M$). Los leg\'itimos usan IP diversa, agente de navegador y payload peque\~no y
+limpio; los bots concentran pocas IPs (alta frecuencia) con agentes an\'omalos; los
+avanzados usan agente cuasi-normal y payload voluminoso con \emph{tokens} de
+inyecci\'on. Comparamos SGE (\textbf{Adaptativo}) contra dos l\'ineas base:
+\textbf{Tradicional} (inspecci\'on est\'atica del $100\%$ en Serverless) y
+\textbf{Edge-only} (nunca escala). Las m\'etricas son la tasa de mitigaci\'on
+(global y de ataques avanzados) y la energ\'ia total en Joules simulados
+\cite{murugesan}. La implementaci\'on es modular y su calidad se verific\'o con el
+analizador est\'atico \texttt{Ruff} y con una bater\'ia de $13$ pruebas en
+\texttt{Pytest} (motor de Nash, condici\'on de indiferencia y simulaci\'on).
+
+\subsection{Resultados principales}
+La Tabla~\ref{tab:main} resume la comparaci\'on. SGE mitiga el $\mathbf{94.38\%}$ del
+total de ataques ---bloqueando el $100\%$ de los ataques ligeros ($313/313$) y el
+$78.95\%$ de los avanzados ($90/114$) en esta corrida, con un rango t\'ipico de
+$\sim\!79$--$88\%$ a trav\'es de m\'ultiples semillas--- mientras reduce el consumo
+energ\'etico en un $\mathbf{85.9\%}$ (de $30{,}010$ a $4{,}225$ Joules) respecto a la
+inspecci\'on est\'atica total. El enfoque Edge-only minimiza la energ\'ia pero deja
+pasar la totalidad de los ataques avanzados ($0\%$ de mitigaci\'on), confirmando que
+la capa profunda es imprescindible para la fracci\'on sigilosa.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Comparaci\'on de enfoques (semilla $7$, $n=2{,}000$). Energ\'ia en Joules
+simulados.}
+\label{tab:main}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Enfoque} & \textbf{Mit.\ global} & \textbf{Mit.\ avanz.} & \textbf{Energ\'ia} \\
+\midrule
+Tradicional (100\%) & $100\%$ & $100\%$ & $30{,}010$ \\
+\textbf{Adaptativo (Nash)} & $\mathbf{94.38}\%$ & $\mathbf{78.95}\%$ & $\mathbf{4{,}225}$ \\
+Edge-only (0\%) & $75.53\%$ & $0\%$ & $2{,}000$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/fig1_energy.png}
+\caption{Consumo energ\'etico por enfoque. El Adaptativo se sit\'ua cerca del piso del
+Edge-only y muy por debajo de la inspecci\'on est\'atica Tradicional.}
+\label{fig:energy}
+\end{figure}
+
+\subsection{An\'alisis: por qu\'e el modelo es tan eficiente}
+La clave del ahorro reside en la \emph{distribuci\'on del costo por capa}. En la
+corrida titular, de las $2{,}000$ peticiones solo $107$ ($5.35\%$) se escalaron a la
+capa Serverless; las $1{,}893$ restantes se resolvieron en el Edge al costo m\'inimo
+$C_{\text{edge}}=1$. Esto ocurre por dos mecanismos complementarios:
+\begin{enumerate}\itemsep2pt
+  \item El $80\%$ de \textbf{tr\'afico leg\'itimo} produce una sospecha $s$ por debajo
+        del umbral de v\'ia r\'apida, de modo que \emph{nunca} activa el motor
+        completo ni la capa Serverless: se sirve a costo $1$.
+  \item El $15\%$ de \textbf{bots ruidosos} se neutraliza en el Edge por
+        \emph{rate-limiting} (firma de agente y alta frecuencia de IP), tambi\'en a
+        costo $1$, sin pagar el sobrecosto de la inspecci\'on profunda.
+\end{enumerate}
+En consecuencia, la energ\'ia total del Adaptativo se descompone en
+$2{,}000$ Joules del Edge (uno por petici\'on) m\'as $2{,}225$ Joules de las $107$
+invocaciones Serverless ($62$ con \emph{cold start} a $25$ y $45$ tibias a $15$),
+totalizando $4{,}225$ Joules. La l\'inea Tradicional, en cambio, paga entre $15$ y
+$25$ Joules por \emph{cada} petici\'on, alcanzando $30{,}010$. El equilibrio de Nash
+reserva anal\'iticamente el gasto costoso para el $\sim\!5\%$ de tr\'afico donde la
+inspecci\'on profunda aporta valor real, materializando el principio de
+ecodise\~no de reducir el sobreprocesamiento innecesario \cite{radu,murugesan}.
+
+\subsection{Frontera de compromiso}
+La Figura~\ref{fig:pareto} traza la frontera seguridad--energ\'ia al variar el
+incentivo de brecha asumido para el adversario ($G_0$, proxy del valor de la API). A
+mayor incentivo, el equilibrio prescribe m\'as escalado y por tanto mayor
+mitigaci\'on avanzada a costa de m\'as energ\'ia, aproxim\'andose asint\'oticamente al
+punto Tradicional. A\'un en su extremo m\'as seguro ($\sim\!92\%$ de mitigaci\'on
+avanzada) el Adaptativo consume del orden de $4{,}260$ Joules, un orden de magnitud
+por debajo de los $30{,}010$ del enfoque est\'atico.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/fig2_pareto.png}
+\caption{Frontera de Pareto seguridad--energ\'ia del enfoque Adaptativo al variar el
+incentivo de brecha $G_0$ (etiquetas junto a cada punto), con los puntos de
+referencia Tradicional y Edge-only.}
+\label{fig:pareto}
+\end{figure}
+
+\section{Discusi\'on}
+\label{sec:discussion}
+Los resultados evidencian que aleatorizar la inspecci\'on seg\'un el equilibrio de
+Nash captura la mayor parte del valor de seguridad de la inspecci\'on exhaustiva con
+una fracci\'on de su costo energ\'etico, alineando la ciberseguridad con los objetivos
+del c\'omputo verde \cite{radu,murugesan}. La especializaci\'on por capa ---Edge
+gratuito para bots ruidosos, Serverless reservado para anomal\'ias de payload---
+permite que el $94.65\%$ de las peticiones jam\'as toquen la capa costosa.
+
+\paragraph{Limitaciones.} (i) El modelo de detecci\'on Serverless es idealizado
+(detecci\'on perfecta al inspeccionar); incorporar falsos positivos/negativos es
+trabajo futuro. (ii) Cada petici\'on se trata como una etapa independiente; un
+verdadero juego estoc\'astico multi-etapa con estado (reputaci\'on de IP,
+calentamiento de la funci\'on) permitir\'ia pol\'iticas dependientes de la historia
+\cite{alpcan}. (iii) La puntuaci\'on de sospecha usa heur\'isticas ligeras;
+aprenderla de datos reales mejorar\'ia su calibraci\'on \cite{manshaei}. (iv) Los
+costos energ\'eticos son unidades relativas simuladas, no mediciones f\'isicas
+\cite{murugesan}.
+
+\section{Conclusiones}
+\label{sec:conclusion}
+Presentamos SGE, una defensa perimetral adaptativa para APIs que formula la decisi\'on
+de inspecci\'on profunda como un juego estoc\'astico no cooperativo con informaci\'on
+imperfecta y la resuelve mediante el equilibrio de Nash en estrategias mixtas.
+Anal\'iticamente, el principio de indiferencia iguala el Joule marginal invertido con
+la seguridad marginal obtenida; emp\'iricamente, SGE logra un $94.38\%$ de
+mitigaci\'on global y bloquea el $100\%$ de los ataques ligeros con un $85.9\%$ de
+ahorro energ\'etico frente a la inspecci\'on est\'atica total. El enfoque demuestra
+que la teor\'ia de juegos es una herramienta efectiva para conciliar la seguridad con
+la sostenibilidad. Como trabajo futuro proponemos extender el modelo a un juego
+estoc\'astico multi-etapa con estado y aprender tanto la funci\'on de sospecha como
+los par\'ametros de utilidad a partir de trazas de tr\'afico reales.
+
+\begin{thebibliography}{9}
+\small
+\bibitem{alpcan} T.~Alpcan and T.~Ba\c{s}ar. \emph{Network Security: A Decision and
+Game-Theoretic Approach}. Cambridge University Press, 2010.
+\bibitem{manshaei} M.~H.~Manshaei, Q.~Zhu, T.~Alpcan, T.~Ba\c{s}ar, and J.-P.
+Hubaux. \emph{Game theory meets network security and privacy}. ACM Computing Surveys
+(CSUR), 45(3):1--39, 2013.
+\bibitem{murugesan} S.~Murugesan and G.~R.~Gangadharan (eds.). \emph{Harnessing Green
+IT: Principles and Practices}. Wiley, 2012.
+\bibitem{radu} L.~D.~Radu. \emph{Green Cloud Computing: An Energy-Efficient
+Ecodesign for IT}. Energies, 2017.
+\bibitem{castro} P.~Castro, V.~Ishakian, V.~Muthusamy, and A.~Slominski. \emph{The
+rise of serverless computing}. Communications of the ACM, 62(12):44--54, 2019.
+\end{thebibliography}
+
+\end{document}
