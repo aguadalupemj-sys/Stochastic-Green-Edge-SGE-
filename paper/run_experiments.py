@@ -40,7 +40,8 @@ HERE = Path(__file__).resolve().parent
 FIG = HERE / "figures"
 FIG.mkdir(parents=True, exist_ok=True)
 
-N_REQUESTS = 3000
+N_REQUESTS = 2000
+HEADLINE_SEED = 7
 SEEDS = list(range(20))
 
 
@@ -76,10 +77,38 @@ def experiment_comparison(config: DefenseConfig) -> dict:
         "energy": n * config.energy_edge,
     }
 
+    # Corrida "titular" reproducible (semilla 7) reportada en el texto.
+    hl = run_simulation(generate_traffic(N_REQUESTS, seed=HEADLINE_SEED),
+                        config=config, seed=HEADLINE_SEED)
+    headline = {
+        "seed": HEADLINE_SEED,
+        "n_requests": hl.total_requests,
+        "global": hl.mitigation_rate * 100,
+        "advanced": hl.advanced_mitigation_rate * 100,
+        "advanced_frac": [hl.advanced_mitigated, hl.advanced_total],
+        "light": (hl.light_mitigated / hl.light_total * 100) if hl.light_total else 100.0,
+        "light_frac": [hl.light_mitigated, hl.light_total],
+        "adaptive_energy": hl.adaptive_energy,
+        "baseline_energy": hl.baseline_energy,
+        "energy_saved": hl.energy_saved,
+        "energy_saved_pct": hl.energy_saved_pct,
+        "escalations": hl.escalations,
+        "serverless_invocations": hl.serverless_invocations,
+        "cold_starts": hl.serverless_cold_starts,
+        "counts": {
+            "legit": hl.counts[[c for c in hl.counts if c.value == "legit"][0]],
+            "light": hl.light_total,
+            "advanced": hl.advanced_total,
+        },
+    }
+
     return {
         "n_requests": N_REQUESTS,
         "n_seeds": len(SEEDS),
+        "headline": headline,
         "adaptive": {k: _mean_std(v) for k, v in adaptive.items()},
+        "adaptive_advanced_min": min(adaptive["advanced"]),
+        "adaptive_advanced_max": max(adaptive["advanced"]),
         "traditional": traditional,
         "edge_only": edge_only,
     }
@@ -142,7 +171,11 @@ def make_figures(comp: dict, pareto: dict, resp: dict) -> None:
     # Fig 1: energia por enfoque.
     fig, ax = plt.subplots(figsize=(5.2, 3.4))
     labels = ["Edge-only", "Adaptativo\n(Nash)", "Tradicional\n(100%)"]
-    energies = [comp["edge_only"]["energy"], comp["adaptive"]["energy"][0], comp["traditional"]["energy"]]
+    energies = [
+        comp["edge_only"]["energy"],
+        comp["headline"]["adaptive_energy"],
+        comp["traditional"]["energy"],
+    ]
     colors = ["#8fbf6a", "#2e7d32", "#b23b3b"]
     bars = ax.bar(labels, energies, color=colors)
     ax.set_ylabel("Energia (Joules simulados)")
@@ -203,8 +236,21 @@ def main() -> None:
     results = {"comparison": comp, "pareto": pareto, "nash_example": nash}
     (HERE / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
 
+    h = comp["headline"]
+    c = h["counts"]
+    lf, af = h["light_frac"], h["advanced_frac"]
+    print(f"== Corrida titular (semilla {h['seed']}, {h['n_requests']} peticiones) ==")
+    print(f"  Trafico     : {c['legit']} legitimo | {c['light']} bots | {c['advanced']} avanzado")
+    print(f"  Mit. global : {h['global']:.2f}%")
+    print(f"  Ligeros     : {h['light']:.0f}% ({lf[0]}/{lf[1]})")
+    print(f"  Avanzados   : {h['advanced']:.2f}% ({af[0]}/{af[1]})")
+    print(f"  Energia     : adapt={h['adaptive_energy']:.0f} J  trad={h['baseline_energy']:.0f} J  "
+          f"ahorro={h['energy_saved_pct']:.2f}%")
+    print(f"  Escalados   : {h['escalations']} (cold starts {h['cold_starts']})")
     a = comp["adaptive"]
-    print("== Comparacion (media sobre", comp["n_seeds"], "semillas,", comp["n_requests"], "peticiones) ==")
+    lo, hi = comp["adaptive_advanced_min"], comp["adaptive_advanced_max"]
+    print(f"== Robustez (media sobre {comp['n_seeds']} semillas) ==")
+    print(f"  avanzados: {a['advanced'][0]:.2f}+-{a['advanced'][1]:.2f}% (rango {lo:.1f}-{hi:.1f}%)")
     print(
         f"Adaptativo   : global={a['global'][0]:.2f}+-{a['global'][1]:.2f}%  "
         f"avanzado={a['advanced'][0]:.2f}+-{a['advanced'][1]:.2f}%  "

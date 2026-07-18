@@ -1,87 +1,116 @@
 {
   "comparison": {
-    "n_requests": 3000,
+    "n_requests": 2000,
     "n_seeds": 20,
+    "headline": {
+      "seed": 7,
+      "n_requests": 2000,
+      "global": 94.37939110070258,
+      "advanced": 78.94736842105263,
+      "advanced_frac": [
+        90,
+        114
+      ],
+      "light": 100.0,
+      "light_frac": [
+        313,
+        313
+      ],
+      "adaptive_energy": 4225.0,
+      "baseline_energy": 30010.0,
+      "energy_saved": 25785.0,
+      "energy_saved_pct": 85.92135954681773,
+      "escalations": 107,
+      "serverless_invocations": 107,
+      "cold_starts": 62,
+      "counts": {
+        "legit": 1573,
+        "light": 313,
+        "advanced": 114
+      }
+    },
     "adaptive": {
       "global": [
-        95.53293721516208,
-        0.9055885937750813
+        95.51713227775824,
+        1.0567453728646585
       ],
       "advanced": [
-        81.77589463002224,
-        3.937425259476139
+        81.63267491064418,
+        4.224224807955078
       ],
       "energy": [
-        5921.5,
-        242.2039429901999
+        3947.5,
+        154.72152403592722
       ],
       "saved_pct": [
-        86.84403465896467,
-        0.5381114041106428
+        86.84605131622793,
+        0.5155665579337791
       ]
     },
+    "adaptive_advanced_min": 73.46938775510205,
+    "adaptive_advanced_max": 88.57142857142857,
     "traditional": {
       "global": 100.0,
       "advanced": 100.0,
-      "energy": 45010.0
+      "energy": 30010.0
     },
     "edge_only": {
-      "global": 74.02597402597402,
+      "global": 75.53444180522565,
       "advanced": 0.0,
-      "energy": 3000.0
+      "energy": 2000.0
     }
   },
   "pareto": {
     "points": [
       {
         "gain": 40,
-        "advanced": 33.77649706070659,
-        "energy": 4182.0
+        "advanced": 32.80294099415519,
+        "energy": 2761.5
       },
       {
         "gain": 70,
-        "advanced": 56.75187180120811,
-        "energy": 5007.0
+        "advanced": 56.5500327820034,
+        "energy": 3330.5
       },
       {
         "gain": 100,
-        "advanced": 68.64539725116065,
-        "energy": 5459.5
+        "advanced": 68.19827018691129,
+        "energy": 3628.0
       },
       {
         "gain": 140,
-        "advanced": 76.75918690307587,
-        "energy": 5759.0
+        "advanced": 75.93186299845715,
+        "energy": 3822.0
       },
       {
         "gain": 180,
-        "advanced": 81.40183970127804,
-        "energy": 5925.0
+        "advanced": 80.56195456884103,
+        "energy": 3940.5
       },
       {
         "gain": 220,
-        "advanced": 85.31341396661146,
-        "energy": 6052.5
+        "advanced": 84.76876779345449,
+        "energy": 4035.5
       },
       {
         "gain": 280,
-        "advanced": 87.91896974773415,
-        "energy": 6170.0
+        "advanced": 87.39673554068747,
+        "energy": 4119.5
       },
       {
         "gain": 340,
-        "advanced": 90.43174558553683,
-        "energy": 6264.0
+        "advanced": 89.85096658198239,
+        "energy": 4187.0
       },
       {
         "gain": 420,
-        "advanced": 92.03377844946158,
-        "energy": 6328.5
+        "advanced": 91.49533078977737,
+        "energy": 4230.0
       },
       {
         "gain": 500,
-        "advanced": 92.91430149344565,
-        "energy": 6366.0
+        "advanced": 92.41907867549102,
+        "energy": 4258.5
       }
     ]
   },
