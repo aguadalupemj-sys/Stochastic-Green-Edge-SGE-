@@ -3,3 +3,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+
+# LaTeX build artefactos
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/*.fls
+paper/*.fdb_latexmk
