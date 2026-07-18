@@ -33,3 +33,12 @@ simulacion por linea de comandos; NO expone un servidor HTTP persistente.
   validar la estabilidad de las metricas en varias semillas.
 - El calculo del Nash prioriza el equilibrio interior mixto; ante una estrategia
   dominante devuelve el equilibrio puro (ver `NashEquilibrium.kind`).
+
+### Paper (paper/)
+- `paper/paper.tex` es el paper academico (LaTeX); `paper/paper.pdf` es el PDF
+  compilado ya versionado.
+- Reproducir datos y figuras: `python3 paper/run_experiments.py` (usa `matplotlib`,
+  incluido en `requirements.txt`; escribe `paper/results.json` y `paper/figures/`).
+- Recompilar el PDF requiere una cadena LaTeX que NO instala el update script (es
+  dependencia de sistema): `apt-get install -y texlive-latex-base texlive-latex-recommended texlive-fonts-recommended texlive-latex-extra`
+  y luego `cd paper && pdflatex paper.tex` (dos pasadas para refs/figuras).
