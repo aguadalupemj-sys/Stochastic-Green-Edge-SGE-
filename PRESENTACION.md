@@ -390,6 +390,30 @@ $$
 
 ---
 
+## 7. Reducción de la huella de carbono
+
+La huella de carbono de una carga de cómputo se modela como:
+
+$$
+E_{\mathrm{CO_2}} = W \cdot \mathrm{PUE} \cdot I_{\mathrm{grid}}
+$$
+
+<span class="small">$W$ = energía (kWh) · $\mathrm{PUE}$ = sobrecosto del centro de datos (~1.5) · $I_{\mathrm{grid}}$ = intensidad de carbono de la red (gCO₂/kWh).</span>
+
+Como $\mathrm{PUE}$ e $I_{\mathrm{grid}}$ son constantes, **la reducción de CO₂ es proporcional a la de energía:**
+
+$$
+\frac{\Delta E_{\mathrm{CO_2}}}{E_{\mathrm{CO_2}}} = \frac{\Delta W}{W} = \mathbf{85.9\%}
+$$
+
+Tres mecanismos: **(1)** menos cómputo (94.65% se queda en el Edge), **(2)** se evita el PUE y la transmisión al centro de datos, **(3)** menos *cold starts*.
+
+> **Estimación ilustrativa:** en una API con 10⁹ peticiones/mes se evitan **~2 toneladas de CO₂/año** (≈ conducir un auto 8,000 km).
+
+<span class="cite">Modelo de emisiones: Masanet et al., *Science* (2020); ecodiseño verde: Radu (2017).</span>
+
+---
+
 ## 7. Figuras del paper
 
 <div class="small">
@@ -422,6 +446,7 @@ $$
 - Formulamos la defensa perimetral como un **juego estocástico** y la resolvemos con el **equilibrio de Nash en estrategias mixtas**.
 - El **principio de indiferencia** iguala analíticamente el Joule invertido con la seguridad ganada.
 - Empíricamente: **94.38% de mitigación** con **85.9% de ahorro energético**.
+- Ese ahorro implica una **reducción proporcional (85.9%) de la huella de carbono**.
 - La teoría de juegos concilia **ciberseguridad** y **sostenibilidad**.
 
 **Trabajo futuro:** juego multi-etapa con estado; aprender la función de sospecha y los pesos de utilidad a partir de trazas reales.
