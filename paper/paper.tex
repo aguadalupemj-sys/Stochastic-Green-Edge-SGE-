@@ -44,7 +44,8 @@ peticiones (semilla $7$) con una mezcla realista ($80\%$ leg\'itimo, $15\%$ bots
 ruidosos, $5\%$ ataques dirigidos), SGE alcanza una \textbf{mitigaci\'on global del
 $94.38\%$} ---bloqueando el $100\%$ de los ataques ligeros y entre $\sim\!79\%$ y
 $\sim\!88\%$ de los avanzados--- consumiendo un \textbf{$85.9\%$ menos de energ\'ia}
-que la inspecci\'on est\'atica total. La eficiencia proviene de que el $80\%$ del
+que la inspecci\'on est\'atica total, lo que se traduce en una \textbf{reducci\'on
+proporcional de la huella de carbono}. La eficiencia proviene de que el $80\%$ del
 tr\'afico leg\'itimo permanece en el costo m\'inimo del Edge ($C_{\text{edge}}=1$),
 evitando invocar la capa Serverless. La implementaci\'on es modular, verificada con
 \texttt{Ruff} y con $13$ pruebas en \texttt{Pytest}.
@@ -344,6 +345,69 @@ referencia Tradicional y Edge-only.}
 \label{fig:pareto}
 \end{figure}
 
+\subsection{Justificaci\'on de la reducci\'on de la huella de carbono}
+\label{sec:carbon}
+El ahorro energ\'etico de SGE se traduce de forma directa en una reducci\'on de
+emisiones de CO\textsubscript{2}. La huella de carbono de una carga de c\'omputo se
+modela habitualmente como el producto de la energ\'ia consumida por la intensidad de
+carbono de la electricidad que la alimenta \cite{masanet,radu}:
+\begin{equation}
+\label{eq:co2}
+E_{\mathrm{CO_2}} \;=\; W \cdot \mathrm{PUE} \cdot I_{\mathrm{grid}},
+\end{equation}
+donde $W$ es la energ\'ia de c\'omputo (kWh), $\mathrm{PUE}$ (\emph{Power Usage
+Effectiveness}) captura el sobrecosto del centro de datos ---refrigeraci\'on,
+distribuci\'on--- (t\'ipicamente $1.4$--$1.6$ \cite{masanet}) e $I_{\mathrm{grid}}$ es
+la intensidad de carbono de la red el\'ectrica (gCO\textsubscript{2}eq/kWh). Para una
+misma infraestructura, $\mathrm{PUE}$ e $I_{\mathrm{grid}}$ son factores constantes,
+por lo que la reducci\'on \emph{relativa} de emisiones coincide exactamente con la
+reducci\'on relativa de energ\'ia:
+\begin{equation}
+\label{eq:co2red}
+\frac{\Delta E_{\mathrm{CO_2}}}{E_{\mathrm{CO_2}}} \;=\; \frac{\Delta W}{W} \;=\; 85.9\%.
+\end{equation}
+Es decir, al recortar en un $85.9\%$ la energ\'ia de la inspecci\'on de amenazas
+(Secci\'on~\ref{sec:results}), SGE recorta en la \emph{misma proporci\'on} las
+emisiones de carbono atribuibles a dicha carga. Este ahorro se sustenta en tres
+mecanismos complementarios:
+\begin{enumerate}\itemsep2pt
+  \item \textbf{Menos c\'omputo total.} El $94.65\%$ de las peticiones se resuelve en
+        el Edge al costo m\'inimo $C_{\text{edge}}=1$, evitando los $15$--$25$ Joules
+        de la inspecci\'on profunda. Menos ciclos de CPU implican menos energ\'ia y,
+        por~\eqref{eq:co2}, menos CO\textsubscript{2}.
+  \item \textbf{Especializaci\'on hacia el borde.} Al no escalar a la funci\'on
+        Serverless, esas peticiones no incurren en el sobrecosto de $\mathrm{PUE}$ del
+        centro de datos centralizado ni en la energ\'ia de transmisi\'on de red
+        asociada, magnitudes que la ecuaci\'on~\eqref{eq:co2} amplifica sobre el gasto
+        bruto de c\'omputo \cite{radu,masanet}.
+  \item \textbf{Menos arranques en fr\'io.} Concentrar las invocaciones en el tr\'afico
+        realmente sospechoso reduce los \emph{cold starts} (los m\'as costosos,
+        $C_{\text{cold}}=25$), recortando el pico energ\'etico por evento
+        \cite{castro}.
+\end{enumerate}
+
+\paragraph{Estimaci\'on ilustrativa a escala.} Para dimensionar el impacto,
+proyectamos el ahorro simulado a un despliegue real. Anclando de forma conservadora
+el costo de una inspecci\'on profunda tibia en $e_{\text{exec}}=1$~J de energ\'ia de
+c\'omputo (equivalente a $C_{\text{exec}}=15$ unidades del modelo), el ahorro medio es
+de $\approx 0.86$~J por petici\'on. Para una API con $n=10^{9}$ peticiones mensuales,
+con $\mathrm{PUE}=1.5$ e $I_{\mathrm{grid}}=0.475$~kgCO\textsubscript{2}/kWh (media
+mundial de la red \cite{masanet}), esto equivale a evitar
+\[
+\Delta E_{\mathrm{CO_2}} \approx \frac{0.86\,\text{J}\times 10^{9}}{3.6\times10^{6}\,\text{J/kWh}}
+\cdot 1.5 \cdot 0.475 \approx 170\ \tfrac{\text{kg CO\textsubscript{2}}}{\text{mes}},
+\]
+esto es, del orden de $\mathbf{2}$~\textbf{toneladas de CO\textsubscript{2} al a\~no}
+---comparable a conducir un autom\'ovil promedio unos $8{,}000$~km--- respecto a la
+inspecci\'on est\'atica total, y \'unicamente por trasladar la seguridad de un modelo
+de inspecci\'on \emph{invariante} a uno \emph{adaptativo guiado por Nash}. Aunque las
+magnitudes absolutas dependen de las hip\'otesis (energ\'ia por inspecci\'on, $\mathrm{PUE}$
+e $I_{\mathrm{grid}}$), la reducci\'on \emph{proporcional} del $85.9\%$
+---resultado central de~\eqref{eq:co2red}--- es independiente de ellas. En s\'intesis,
+SGE materializa el principio de ecodise\~no de eliminar el sobreprocesamiento
+innecesario \cite{radu,murugesan}, convirtiendo un ahorro de Joules en un ahorro
+directo y cuantificable de huella de carbono.
+
 \section{Discusi\'on}
 \label{sec:discussion}
 Los resultados evidencian que aleatorizar la inspecci\'on seg\'un el equilibrio de
@@ -371,7 +435,9 @@ imperfecta y la resuelve mediante el equilibrio de Nash en estrategias mixtas.
 Anal\'iticamente, el principio de indiferencia iguala el Joule marginal invertido con
 la seguridad marginal obtenida; emp\'iricamente, SGE logra un $94.38\%$ de
 mitigaci\'on global y bloquea el $100\%$ de los ataques ligeros con un $85.9\%$ de
-ahorro energ\'etico frente a la inspecci\'on est\'atica total. El enfoque demuestra
+ahorro energ\'etico ---y, en consecuencia, una reducci\'on proporcional del $85.9\%$
+en la huella de carbono de la carga de inspecci\'on (Secci\'on~\ref{sec:carbon})---
+frente a la inspecci\'on est\'atica total. El enfoque demuestra
 que la teor\'ia de juegos es una herramienta efectiva para conciliar la seguridad con
 la sostenibilidad. Como trabajo futuro proponemos extender el modelo a un juego
 estoc\'astico multi-etapa con estado y aprender tanto la funci\'on de sospecha como
@@ -390,6 +456,9 @@ IT: Principles and Practices}. Wiley, 2012.
 Ecodesign for IT}. Energies, 2017.
 \bibitem{castro} P.~Castro, V.~Ishakian, V.~Muthusamy, and A.~Slominski. \emph{The
 rise of serverless computing}. Communications of the ACM, 62(12):44--54, 2019.
+\bibitem{masanet} E.~Masanet, A.~Shehabi, N.~Lei, S.~Smith, and J.~Koomey.
+\emph{Recalibrating global data center energy-use estimates}. Science,
+367(6481):984--986, 2020.
 \end{thebibliography}
 
 \end{document}
