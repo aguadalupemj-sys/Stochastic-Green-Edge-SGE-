@@ -69,7 +69,13 @@ class EdgeLayer:
         # inyeccion elevan la anomalia (heuristica ligera del Edge).
         size = request.payload_size
         size_anomaly = float(np.clip((size - 512) / 4096.0, 0.0, 1.0))
-        injection_tokens = ("<script", "union select", "../", "'; drop", "${", "eval(")
+        # Tokens de inyeccion clasica (SQL/XSS/traversal) y de inyeccion de prompts
+        # (ataques a APIs respaldadas por modelos de lenguaje).
+        injection_tokens = (
+            "<script", "union select", "../", "'; drop", "${", "eval(",
+            "ignore previous", "ignore all previous", "disregard", "system:",
+            "you are now", "act as", "jailbreak", "reveal your", "prompt:",
+        )
         token_anomaly = 0.6 if any(tok in request.payload.lower() for tok in injection_tokens) else 0.0
         payload_anomaly = float(np.clip(size_anomaly + token_anomaly, 0.0, 1.0))
 
