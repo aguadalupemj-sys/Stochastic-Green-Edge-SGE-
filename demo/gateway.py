@@ -310,6 +310,7 @@ def trace_request(request: HttpRequest) -> dict:
             "0.70*payload": round(0.70 * f.payload_anomaly, 3),
             "= sospecha s": round(s, 3),
         },
+        "bar": {"value": round(s, 3), "threshold": fast_path},
         "code": CODE["suspicion"],
     })
 
@@ -410,6 +411,49 @@ def trace_request(request: HttpRequest) -> dict:
     }
 
 
+def roll_request(request: HttpRequest, n: int) -> dict:
+    """Repite N veces el muestreo de la estrategia mixta para una MISMA peticion.
+
+    Ilustra la naturaleza estocastica: para trafico sospechoso, el mismo caso unas
+    veces escala a la inspeccion profunda y otras se queda en el Edge.
+    """
+    cfg = DefenseConfig()
+    edge = _fresh_inspector_edge()
+    f = edge.extract_features(request)
+    s = suspicion_score(f, cfg)
+    block_freq = edge._edge_block_ip_frequency     # noqa: SLF001
+    fast_path = edge._fast_path_threshold          # noqa: SLF001
+    is_advanced = request.true_class == TrafficClass.ADVANCED_ATTACK
+
+    if f.user_agent_anomaly >= 1.0 and f.ip_frequency > block_freq:
+        return {"path": "edge_block", "suspicion": round(s, 3), "n": n,
+                "deterministic": True, "escalated": 0, "green": n, "breaches": 0,
+                "p_active": 0.0}
+    if s < fast_path:
+        return {"path": "fast_path", "suspicion": round(s, 3), "n": n,
+                "deterministic": True, "escalated": 0, "green": n, "breaches": 0,
+                "p_active": 0.0}
+
+    eq = solve_for_request(f, cfg, serverless_cold=False)
+    rng = np.random.default_rng()
+    rolls = rng.random(n)
+    escalated = int(np.count_nonzero(rolls >= eq.p_green))
+    green = n - escalated
+    breaches = green if is_advanced else 0
+    return {
+        "path": "nash",
+        "suspicion": round(s, 3),
+        "n": n,
+        "deterministic": False,
+        "p_active": round(eq.p_active, 3),
+        "p_green": round(eq.p_green, 3),
+        "escalated": escalated,
+        "green": green,
+        "breaches": breaches,
+        "is_advanced": is_advanced,
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args) -> None:  # silencia el log ruidoso por peticion
         pass
@@ -436,6 +480,12 @@ class Handler(BaseHTTPRequestHandler):
             kind = qs.get("kind", ["legit"])[0]
             req = _SAMPLES.get(kind, _SAMPLES["legit"])
             self._json(trace_request(req))
+        elif route == "/roll":
+            qs = parse_qs(parsed.query)
+            kind = qs.get("kind", ["prompt"])[0]
+            n = max(1, min(int(qs.get("n", ["30"])[0]), 500))
+            req = _SAMPLES.get(kind, _SAMPLES["prompt"])
+            self._json(roll_request(req, n))
         elif route == "/metrics":
             self._json(GATEWAY.snapshot())
         elif route == "/reset":
@@ -642,6 +692,17 @@ INSPECTOR_HTML = """<!DOCTYPE html>
   table.mx td { border:1px solid #cfe3c6; padding:3px 10px; font-family:ui-monospace,monospace; font-size:13px; text-align:right; }
   .verdict { margin-top:14px; padding:14px 16px; border-radius:12px; background:#e6efe1; color:var(--dark);
              font-weight:700; font-size:15px; }
+  .sbar { position:relative; height:22px; border-radius:6px; margin:10px 0 22px;
+          background:linear-gradient(90deg,#8fbf6a,#e0c341,#b23b3b); }
+  .sbar .mark { position:absolute; top:-4px; width:3px; height:30px; background:#12240f; }
+  .sbar .lbl { position:absolute; top:26px; font-size:11px; color:#12240f; transform:translateX(-50%); font-weight:700; }
+  .sbar .thr { position:absolute; top:-4px; width:2px; height:30px; background:#1565c0; }
+  .sbar .thrlbl { position:absolute; top:-20px; font-size:10px; color:#1565c0; transform:translateX(-50%); }
+  .hist { display:flex; align-items:flex-end; gap:16px; height:130px; margin:12px 0 6px; }
+  .hcol { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; }
+  .hcol .bar { width:100%; border-radius:6px 6px 0 0; }
+  .hcol .cap { font-size:12px; margin-top:6px; text-align:center; color:#173a15; }
+  .hcol .num { font-size:18px; font-weight:700; color:var(--dark); }
 </style>
 </head>
 <body>
@@ -660,6 +721,10 @@ INSPECTOR_HTML = """<!DOCTYPE html>
   </div>
   <div id="pipe" class="pipe"></div>
   <div id="verdict"></div>
+  <div id="repeatBox" style="display:none; margin-top:16px">
+    <button onclick="rollRun()">&#127922; Repetir esta peticion 100 veces (ver el dado)</button>
+    <div id="hist"></div>
+  </div>
 </div>
 <script>
 const $ = id => document.getElementById(id);
@@ -678,8 +743,21 @@ function renderDetail(d){
   }
   return h + '</div>';
 }
+function suspicionBar(bar){
+  const pct = Math.max(0, Math.min(100, bar.value*100));
+  const thr = Math.max(0, Math.min(100, bar.threshold*100));
+  return `<div class="sbar">
+      <div class="thr" style="left:${thr}%"></div>
+      <div class="thrlbl" style="left:${thr}%">umbral ${bar.threshold}</div>
+      <div class="mark" style="left:${pct}%"></div>
+      <div class="lbl" style="left:${pct}%">s = ${bar.value}</div>
+    </div>`;
+}
+let lastKind = 'prompt';
 async function run(kind){
+  lastKind = kind;
   $('pipe').innerHTML = ''; $('verdict').innerHTML = '';
+  $('repeatBox').style.display = 'none'; $('hist').innerHTML = '';
   const r = await fetch('/inspect?kind='+kind); const d = await r.json();
   for (let i=0;i<d.steps.length;i++){
     const s = d.steps[i];
@@ -689,6 +767,7 @@ async function run(kind){
     if (s.icon === 'BRE') cls += ' bre';
     el.className = cls;
     let html = `<h3><span class="badge">${s.icon}</span> ${s.stage}</h3>` + renderDetail(s.detail);
+    if (s.bar) html += suspicionBar(s.bar);
     if (s.code) html += `<pre>${s.code.replace(/</g,'&lt;')}</pre>`;
     el.innerHTML = html;
     $('pipe').appendChild(el);
@@ -701,6 +780,31 @@ async function run(kind){
   v.textContent = 'Resultado: ' + d.verdict + '  |  energia SGE = ' + d.energy +
                   ' vs tradicional = ' + d.baseline_energy;
   $('verdict').appendChild(v);
+  $('repeatBox').style.display = 'block';
+}
+async function rollRun(){
+  const r = await fetch('/roll?kind='+lastKind+'&n=100'); const d = await r.json();
+  if (d.deterministic){
+    $('hist').innerHTML = `<div class="verdict">Esta peticion es DETERMINISTA (camino
+      ${d.path}): siempre se resuelve igual, sin dado. La aleatoriedad solo aparece en el
+      trafico sospechoso que llega al motor de Nash.</div>`;
+    return;
+  }
+  const esc = d.escalated, grn = d.green, n = d.n;
+  const h = Math.max(esc, grn) || 1;
+  $('hist').innerHTML = `
+    <p style="font-size:14px">De <b>${n}</b> repeticiones de la MISMA peticion
+      (P(escalar)=${d.p_active}): el dado decidio distinto cada vez.</p>
+    <div class="hist">
+      <div class="hcol"><div class="num">${esc}</div>
+        <div class="bar" style="height:${esc/h*100}%; background:#2e7d32"></div>
+        <div class="cap">Escalo a<br>Serverless</div></div>
+      <div class="hcol"><div class="num">${grn}</div>
+        <div class="bar" style="height:${grn/h*100}%; background:${d.is_advanced?'#b23b3b':'#8fbf6a'}"></div>
+        <div class="cap">Se quedo<br>en Edge${d.is_advanced?' (BRECHA)':''}</div></div>
+    </div>
+    <p style="font-size:13px; color:#4b6a49">La proporcion tiende a P(escalar)=${d.p_active}
+      del Equilibrio de Nash: asi se equilibran seguridad y energia.</p>`;
 }
 </script>
 </body>
