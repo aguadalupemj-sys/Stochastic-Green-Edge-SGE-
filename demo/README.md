@@ -20,6 +20,10 @@ Luego abre **http://localhost:8000** en tu navegador.
 
 En el panel puedes:
 
+- **Abrir el Inspector paso a paso** (enlace arriba, o `http://localhost:8000/inspector`):
+  envías una petición y ves **todo el proceso animado** con los valores reales y el
+  **código** de cada etapa — extracción de métricas, puntuación de sospecha, matrices
+  del Equilibrio de Nash, el muestreo de la estrategia mixta y la decisión final.
 - **Generar 500 / 2000 peticiones** con la mezcla realista (80 % legítimo, 15 % bots,
   5 % ataques avanzados) y ver cómo suben la mitigación y el ahorro de energía.
 - **Enviar peticiones individuales** (legítimo, bot, *SQL injection*, *prompt

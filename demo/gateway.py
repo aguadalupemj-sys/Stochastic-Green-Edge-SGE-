@@ -33,6 +33,7 @@ import numpy as np
 
 from sge.config import DefenseConfig
 from sge.edge import EdgeLayer
+from sge.game_theory import build_payoff_matrices, solve_for_request, suspicion_score
 from sge.models import DefenderAction, HttpRequest, TrafficClass
 from sge.serverless import ServerlessLayer
 from sge.simulation import generate_traffic
@@ -216,6 +217,199 @@ _SAMPLES = {
 }
 
 
+# --- Inspector: trafico de fondo fijo para que las frecuencias de IP sean
+# realistas y DETERMINISTAS en cada inspeccion (independientes del historial). ---
+_INSPECTOR_BACKGROUND = generate_traffic(400, seed=1)
+
+
+def _fresh_inspector_edge() -> EdgeLayer:
+    """Edge pre-calentado con la misma ventana de fondo en cada llamada."""
+    edge = EdgeLayer(DefenseConfig(), rng=np.random.default_rng(0))
+    for bg in _INSPECTOR_BACKGROUND:
+        edge.extract_features(bg)
+    return edge
+
+# Fragmentos del codigo real de `sge/` que se muestran en cada etapa del inspector.
+CODE = {
+    "features": (
+        "# sge/edge.py — extract_features()\n"
+        "ip_frequency = ip_count / window * 100.0\n"
+        "ua_anomaly = 0.0 if navegador_conocido else 1.0\n"
+        "size_anomaly = clip((size - 512) / 4096, 0, 1)\n"
+        "token_anomaly = 0.6 if hay_token_inyeccion else 0.0\n"
+        "payload_anomaly = clip(size_anomaly + token_anomaly, 0, 1)"
+    ),
+    "suspicion": (
+        "# sge/game_theory.py — suspicion_score()\n"
+        "freq_component = 1 - exp(-ip_frequency / 6)\n"
+        "s = 0.15*freq_component + 0.15*ua_anomaly + 0.70*payload_anomaly"
+    ),
+    "decide": (
+        "# sge/edge.py — decide()\n"
+        "if ua_anomaly >= 1 and ip_frequency > 1.5:\n"
+        "    return GREEN  # bot ruidoso -> bloqueo barato en el Edge\n"
+        "if s < 0.12:\n"
+        "    return GREEN  # via rapida: trafico benigno\n"
+        "nash = solve_for_request(features, config, cold)  # trafico sospechoso"
+    ),
+    "matrices": (
+        "# sge/game_theory.py — build_payoff_matrices()\n"
+        "risk   = 0.15 + 0.85 * s\n"
+        "damage = 140 * risk        # dano si A_M evade\n"
+        "A_def = [[R_edge - C_edge,  -C_edge - damage],\n"
+        "         [R_deep - C_srv,   R_deep - C_srv ]]"
+    ),
+    "nash": (
+        "# sge/game_theory.py — principio de indiferencia\n"
+        "p = (B[1,1]-B[1,0]) / ((B[0,0]-B[1,0])-(B[0,1]-B[1,1]))\n"
+        "escalate = random() >= p_green   # muestreo de la estrategia mixta"
+    ),
+}
+
+
+def trace_request(request: HttpRequest) -> dict:
+    """Ejecuta el pipeline SGE paso a paso y devuelve TODOS los valores intermedios."""
+    cfg = DefenseConfig()
+    edge = _fresh_inspector_edge()
+    f = edge.extract_features(request)
+    s = suspicion_score(f, cfg)
+    freq_component = float(1.0 - np.exp(-f.ip_frequency / 6.0))
+
+    fast_path = edge._fast_path_threshold          # noqa: SLF001
+    block_freq = edge._edge_block_ip_frequency     # noqa: SLF001
+
+    steps: list[dict] = []
+    steps.append({
+        "stage": "Peticion entrante",
+        "icon": "IN",
+        "detail": {
+            "IP origen": request.source_ip,
+            "User-Agent": request.user_agent[:48],
+            "Payload (bytes)": request.payload_size,
+            "Vista payload": request.payload[:70] + ("..." if len(request.payload) > 70 else ""),
+        },
+        "code": None,
+    })
+    steps.append({
+        "stage": "1. Edge extrae metricas",
+        "icon": "EX",
+        "detail": {
+            "ip_frequency": round(f.ip_frequency, 2),
+            "user_agent_anomaly": f.user_agent_anomaly,
+            "payload_anomaly": round(f.payload_anomaly, 2),
+        },
+        "code": CODE["features"],
+    })
+    steps.append({
+        "stage": "2. Puntuacion de sospecha",
+        "icon": "S",
+        "detail": {
+            "freq_component": round(freq_component, 3),
+            "0.15*freq": round(0.15 * freq_component, 3),
+            "0.15*ua": round(0.15 * f.user_agent_anomaly, 3),
+            "0.70*payload": round(0.70 * f.payload_anomaly, 3),
+            "= sospecha s": round(s, 3),
+        },
+        "code": CODE["suspicion"],
+    })
+
+    # --- Ramificacion de la decision ---
+    if f.user_agent_anomaly >= 1.0 and f.ip_frequency > block_freq:
+        path = "edge_block"
+        steps.append({
+            "stage": "3. Decision: BLOQUEO EN EL EDGE",
+            "icon": "BLK",
+            "detail": {
+                "Motivo": "User-Agent anomalo + IP muy frecuente (bot ruidoso)",
+                "Accion": "D_V (Verde) — rate-limiting",
+                "Energia gastada": f"{cfg.energy_edge} (Edge)",
+            },
+            "code": CODE["decide"],
+        })
+        energy = cfg.energy_edge
+        verdict = "Bloqueado barato en el Edge (sin inspeccion profunda)"
+    elif s < fast_path:
+        path = "fast_path"
+        steps.append({
+            "stage": "3. Decision: VIA RAPIDA VERDE",
+            "icon": "OK",
+            "detail": {
+                "Motivo": f"sospecha {round(s, 3)} < umbral {fast_path}",
+                "Accion": "D_V (Verde) — servir directo",
+                "Energia gastada": f"{cfg.energy_edge} (Edge)",
+            },
+            "code": CODE["decide"],
+        })
+        energy = cfg.energy_edge
+        verdict = "Servido en el Edge a costo minimo (trafico benigno)"
+    else:
+        path = "nash"
+        A_def, B_att = build_payoff_matrices(f, cfg, serverless_cold=False)
+        eq = solve_for_request(f, cfg, serverless_cold=False)
+        steps.append({
+            "stage": "3. Trafico sospechoso -> motor de Nash",
+            "icon": "NASH",
+            "detail": {
+                "Matriz Defensor U_D": [[round(x, 2) for x in row] for row in A_def.tolist()],
+                "Matriz Atacante U_A": [[round(x, 2) for x in row] for row in B_att.tolist()],
+                "(filas D_V,D_A | cols A_L,A_M)": "",
+            },
+            "code": CODE["matrices"],
+        })
+        roll = float(np.random.default_rng().random())
+        escalate = roll >= eq.p_green
+        steps.append({
+            "stage": "4. Equilibrio de Nash + muestreo",
+            "icon": "DICE",
+            "detail": {
+                "P(D_V) Verde": round(eq.p_green, 3),
+                "P(D_A) Escalar": round(eq.p_active, 3),
+                "Tipo": eq.kind,
+                "Dado aleatorio": round(roll, 3),
+                "Resultado": "ESCALA a Serverless" if escalate else "se queda Verde",
+            },
+            "code": CODE["nash"],
+        })
+        if escalate:
+            energy = cfg.energy_edge + cfg.energy_serverless_exec
+            steps.append({
+                "stage": "5. Inspeccion profunda (Serverless)",
+                "icon": "DEEP",
+                "detail": {
+                    "Accion": "D_A (Activa) — sanitizacion + validacion",
+                    "Amenaza detectada": request.true_class != TrafficClass.LEGIT,
+                    "Energia gastada": f"{energy} (Edge {cfg.energy_edge} + Serverless {cfg.energy_serverless_exec})",
+                },
+                "code": None,
+            })
+            verdict = "Escalado a inspeccion profunda: amenaza neutralizada"
+        else:
+            energy = cfg.energy_edge
+            breach = request.true_class == TrafficClass.ADVANCED_ATTACK
+            steps.append({
+                "stage": "5. Permanece en el Edge",
+                "icon": "BRE" if breach else "OK",
+                "detail": {
+                    "Accion": "D_V (Verde)",
+                    "Riesgo": "BRECHA: ataque avanzado evadio" if breach else "trafico resuelto",
+                    "Energia gastada": f"{energy} (Edge)",
+                },
+                "code": None,
+            })
+            verdict = ("Brecha: el ataque avanzado evadio (el dado cayo en Verde)"
+                       if breach else "Resuelto en el Edge")
+
+    return {
+        "true_class": request.true_class.value,
+        "suspicion": round(s, 3),
+        "path": path,
+        "energy": energy,
+        "baseline_energy": cfg.energy_serverless_exec,
+        "verdict": verdict,
+        "steps": steps,
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args) -> None:  # silencia el log ruidoso por peticion
         pass
@@ -235,6 +429,13 @@ class Handler(BaseHTTPRequestHandler):
         route = parsed.path
         if route == "/":
             self._send(200, DASHBOARD_HTML.encode("utf-8"), "text/html; charset=utf-8")
+        elif route == "/inspector":
+            self._send(200, INSPECTOR_HTML.encode("utf-8"), "text/html; charset=utf-8")
+        elif route == "/inspect":
+            qs = parse_qs(parsed.query)
+            kind = qs.get("kind", ["legit"])[0]
+            req = _SAMPLES.get(kind, _SAMPLES["legit"])
+            self._json(trace_request(req))
         elif route == "/metrics":
             self._json(GATEWAY.snapshot())
         elif route == "/reset":
@@ -321,6 +522,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <header>
   <h1>Stochastic Green Edge — API Gateway (demo)</h1>
   <p>Defensa adaptativa por Equilibrio de Nash · seguridad con energia y huella de carbono minimas</p>
+  <p style="margin-top:8px"><a href="/inspector" style="color:#d7f0cf;font-weight:600">
+    &#128269; Abrir el Inspector paso a paso (ver el proceso y el codigo) &rarr;</a></p>
 </header>
 <div class="wrap">
   <div class="actions">
@@ -399,6 +602,106 @@ async function sample(kind){
 }
 async function reset(){ await fetch('/reset'); logline('> metricas reiniciadas'); await refresh(); }
 refresh(); setInterval(refresh, 1500);
+</script>
+</body>
+</html>
+"""
+
+
+INSPECTOR_HTML = """<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SGE — Inspector paso a paso</title>
+<style>
+  :root { --green:#2e7d32; --dark:#1b5e20; --bad:#b23b3b; --bg:#f5f9f3; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:#12240f; }
+  header { background:linear-gradient(135deg,#1b5e20,#2e7d32); color:#fff; padding:18px 28px; }
+  header h1 { margin:0; font-size:21px; }
+  header a { color:#d7f0cf; font-size:14px; }
+  .wrap { max-width:900px; margin:0 auto; padding:18px 28px 70px; }
+  .actions { display:flex; flex-wrap:wrap; gap:10px; margin:6px 0 18px; }
+  button { border:none; border-radius:8px; padding:10px 14px; font-size:14px; cursor:pointer; background:var(--green); color:#fff; font-weight:600; }
+  button.sec { background:#e6efe1; color:var(--dark); }
+  button:hover { filter:brightness(1.05); }
+  .pipe { display:flex; flex-direction:column; gap:0; }
+  .step { background:#fff; border-radius:12px; padding:14px 16px; box-shadow:0 1px 4px rgba(0,0,0,.08);
+          margin-bottom:8px; opacity:0; transform:translateY(8px); transition:all .35s ease; }
+  .step.show { opacity:1; transform:translateY(0); }
+  .step h3 { margin:0 0 8px; font-size:15px; color:var(--dark); display:flex; align-items:center; gap:8px; }
+  .badge { background:var(--green); color:#fff; font-size:11px; font-weight:700; border-radius:6px; padding:3px 7px; }
+  .step.blk h3 .badge, .step.bre h3 .badge { background:var(--bad); }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 14px; font-size:14px; }
+  .kv .k { color:#4b6a49; } .kv .v { font-weight:600; color:#173a15; font-family:ui-monospace,monospace; }
+  pre { background:#10240f; color:#d7f0cf; border-radius:8px; padding:10px 12px; font-size:12.5px;
+        overflow:auto; margin:10px 0 0; }
+  .arrow { text-align:center; color:#8fbf6a; font-size:20px; line-height:.6; }
+  table.mx { border-collapse:collapse; margin:2px 0; }
+  table.mx td { border:1px solid #cfe3c6; padding:3px 10px; font-family:ui-monospace,monospace; font-size:13px; text-align:right; }
+  .verdict { margin-top:14px; padding:14px 16px; border-radius:12px; background:#e6efe1; color:var(--dark);
+             font-weight:700; font-size:15px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>&#128269; Inspector paso a paso — Stochastic Green Edge</h1>
+  <a href="/">&larr; Volver al panel</a>
+</header>
+<div class="wrap">
+  <p>Elige una peticion y observa TODO el proceso: metricas, sospecha, matrices del
+  Equilibrio de Nash, la decision y el codigo real que ejecuta cada etapa.</p>
+  <div class="actions">
+    <button onclick="run('legit')">Inspeccionar: legitimo</button>
+    <button class="sec" onclick="run('bot')">bot ruidoso</button>
+    <button class="sec" onclick="run('sqli')">SQL injection</button>
+    <button class="sec" onclick="run('prompt')">prompt injection</button>
+  </div>
+  <div id="pipe" class="pipe"></div>
+  <div id="verdict"></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+function matrix(rows){
+  let t = '<table class="mx">';
+  for (const r of rows){ t += '<tr>' + r.map(x => `<td>${x}</td>`).join('') + '</tr>'; }
+  return t + '</table>';
+}
+function renderDetail(d){
+  let h = '<div class="kv">';
+  for (const [k,v] of Object.entries(d)){
+    let val;
+    if (Array.isArray(v)) val = matrix(v);
+    else val = String(v);
+    h += `<div class="k">${k}</div><div class="v">${val}</div>`;
+  }
+  return h + '</div>';
+}
+async function run(kind){
+  $('pipe').innerHTML = ''; $('verdict').innerHTML = '';
+  const r = await fetch('/inspect?kind='+kind); const d = await r.json();
+  for (let i=0;i<d.steps.length;i++){
+    const s = d.steps[i];
+    const el = document.createElement('div');
+    let cls = 'step';
+    if (s.icon === 'BLK') cls += ' blk';
+    if (s.icon === 'BRE') cls += ' bre';
+    el.className = cls;
+    let html = `<h3><span class="badge">${s.icon}</span> ${s.stage}</h3>` + renderDetail(s.detail);
+    if (s.code) html += `<pre>${s.code.replace(/</g,'&lt;')}</pre>`;
+    el.innerHTML = html;
+    $('pipe').appendChild(el);
+    if (i < d.steps.length-1){ const a=document.createElement('div'); a.className='arrow'; a.textContent='\\u2193'; $('pipe').appendChild(a); }
+    await new Promise(res => setTimeout(res, 550));
+    el.classList.add('show');
+  }
+  const v = document.createElement('div');
+  v.className = 'verdict';
+  v.textContent = 'Resultado: ' + d.verdict + '  |  energia SGE = ' + d.energy +
+                  ' vs tradicional = ' + d.baseline_energy;
+  $('verdict').appendChild(v);
+}
 </script>
 </body>
 </html>
