@@ -26,3 +26,6 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.per-file-ignores]
 # Los imports tras configurar sys.path y el backend de matplotlib son intencionales.
 "paper/run_experiments.py" = ["E402"]
+"paper/make_sustainability_figures.py" = ["E402"]
+# El gateway importa tras ajustar sys.path (E402) y embebe una plantilla HTML/JS (E501).
+"demo/gateway.py" = ["E402", "E501"]
