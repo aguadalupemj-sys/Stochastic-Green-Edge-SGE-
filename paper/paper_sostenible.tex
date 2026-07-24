@@ -7,7 +7,7 @@
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{array}
-\usepackage{xcolor}
+\usepackage[table]{xcolor}
 \usepackage{caption}
 \usepackage[hidelinks]{hyperref}
 
@@ -55,7 +55,7 @@ principio de ecodise\~no eficaz para alinear la seguridad con la descarbonizaci\
 \vspace{4pt}
 \noindent\textbf{Palabras clave:} c\'omputo verde, huella de carbono, eficiencia
 energ\'etica, computaci\'on sostenible, edge computing, serverless, equilibrio de
-Nash, seguridad de APIs.
+Nash, seguridad de APIs, inyecci\'on de prompts, AWS, ESG, B2B SaaS.
 \end{abstract}
 
 \section{Introducci\'on}
@@ -74,7 +74,29 @@ payload--- con independencia de su riesgo real. Este gasto uniforme maximiza la
 cobertura, pero desperdicia energ\'ia (y emite CO\textsubscript{2}) procesando de
 forma intensiva un tr\'afico que, en su gran mayor\'ia, es leg\'itimo o trivialmente
 malicioso. El problema es que la fracci\'on verdaderamente peligrosa ---ataques
-dirigidos que imitan tr\'afico leg\'itimo--- \textbf{no es directamente observable}.
+dirigidos que imitan tr\'afico leg\'itimo, como la \emph{inyecci\'on de prompts}
+(\emph{prompt injection}) contra APIs respaldadas por modelos de lenguaje--- \textbf{no
+es directamente observable}.
+
+\paragraph{El costo ambiental de la seguridad ``siempre al m\'aximo''.} Las defensas
+tradicionales ---cortafuegos de aplicaciones web (WAF), pasarelas de API y tuber\'ias
+de inspecci\'on profunda--- se aprovisionan para procesar \emph{el $100\%$ del
+tr\'afico entrante a su m\'axima capacidad}: cada petici\'on atraviesa el conjunto
+completo de reglas de firma, validaci\'on criptogr\'afica y, cada vez m\'as, an\'alisis
+de contenido basado en aprendizaje autom\'atico o en modelos de lenguaje. Esta postura
+de ``inspecci\'on total y constante'' mantiene la CPU y los aceleradores en alta
+utilizaci\'on de forma permanente, con independencia de que en torno al $95\%$ del
+tr\'afico sea benigno o trivialmente malicioso. El resultado es un consumo el\'ectrico
+sostenido y, por la ecuaci\'on~\eqref{eq:co2}, una l\'inea base de carbono elevada y
+constante ---un desperdicio energ\'etico masivo dedicado a examinar exhaustivamente
+peticiones que no lo requieren. La irrupci\'on de las APIs respaldadas por modelos de
+lenguaje agrava el problema: detectar una inyecci\'on de prompts puede exigir invocar
+un modelo, elevando el costo energ\'etico \emph{por inspecci\'on} en varios \'ordenes
+de magnitud. SGE invierte este paradigma: un filtro \emph{Edge} de baja potencia
+resuelve de forma econ\'omica la mayor\'ia benigna y, guiado por el equilibrio de Nash,
+\emph{solo} escala a la inspecci\'on profunda costosa la fracci\'on sospechosa,
+recortando la energ\'ia ---y la huella de carbono--- de la defensa en un $85.9\%$ sin
+degradar de forma apreciable la protecci\'on.
 
 Este art\'iculo reformula la decisi\'on de ``inspeccionar o no'' como un
 \textbf{problema de sostenibilidad}: minimizar la energ\'ia (y la huella de carbono)
@@ -93,6 +115,88 @@ como el \emph{mecanismo} para lograr el fin sostenible. Nuestras contribuciones 
   \item Una \textbf{cuantificaci\'on de la huella de carbono} evitada, con figuras y
         estimaciones reproducibles a escala real.
 \end{itemize}
+
+\section{Estado del Arte}
+\label{sec:sota}
+La seguridad de aplicaciones en la nube se ha estructurado en torno a varias familias
+de controles. En el per\'imetro operan los \emph{cortafuegos de aplicaciones web} (WAF)
+basados en firmas y reglas gestionadas, complementados con \emph{limitaci\'on de tasa}
+(\emph{rate-limiting}) y listas de reputaci\'on de IP. Frente a la denegaci\'on de
+servicio se despliegan servicios de mitigaci\'on volum\'etrica y redes de distribuci\'on
+de contenido. Un segundo estrato lo forman los detectores de anomal\'ias basados en
+aprendizaje autom\'atico y las plataformas de gesti\'on de postura (\emph{CSPM/CNAPP}),
+que buscan configuraciones err\'oneas y comportamientos an\'omalos. M\'as recientemente,
+el auge de las aplicaciones respaldadas por modelos de lenguaje ha motivado
+\emph{barreras de contenido} (\emph{guardrails}) espec\'ificas contra la inyecci\'on de
+prompts \cite{owaspllm,owaspapi}. Paralelamente, la comunidad acad\'emica ha aplicado la
+teor\'ia de juegos a la seguridad de redes, modelando la interacci\'on atacante--defensor
+\cite{alpcan,manshaei}.
+
+Pese a su madurez, el estado del arte comparte tres limitaciones estructurales. Primera,
+es predominantemente \textbf{reactivo}: los controles act\'uan tras observar una firma o
+una anomal\'ia, y su dise\~no optimiza la \emph{cobertura} de detecci\'on, no el
+\emph{costo} de defenderse. Segunda, trata la profundidad de inspecci\'on como un
+recurso \textbf{gratuito e ilimitado}: la recomendaci\'on por defecto es inspeccionar
+todo el tr\'afico a m\'axima profundidad, sin un modelo expl\'icito del gasto
+computacional o energ\'etico que ello implica. Tercera, y como corolario, la
+\textbf{eficiencia energ\'etica y la huella de carbono de la propia defensa est\'an
+ausentes} del proceso de dise\~no; los marcos de referencia industriales priorizan
+riesgo y cumplimiento, pero no la sostenibilidad del mecanismo de mitigaci\'on
+\cite{csa,awswaf}. Los trabajos de seguridad basados en teor\'ia de juegos, por su
+parte, rara vez incorporan el costo energ\'etico como t\'ermino de la funci\'on de
+utilidad. SGE se sit\'ua precisamente en esa brecha.
+
+\subsection{Panorama de amenazas y mitigaci\'on en la nube (AWS)}
+\label{sec:top10}
+La Tabla~\ref{tab:top10} sintetiza diez de las clases de ataque m\'as frecuentes contra
+cargas en la nube y su mitigaci\'on con servicios nativos de Amazon Web Services (AWS),
+segun los marcos de referencia vigentes \cite{csa,owaspapi,owaspllm,awswaf}. La mayor\'ia
+de estos controles operan bajo la premisa de inspecci\'on exhaustiva; SGE es
+complementario y aporta la capa de \emph{eficiencia} de la que carecen.
+
+\begin{table*}[t]
+\centering
+\small
+\caption{Top 10 de ataques a la nube y su mitigaci\'on con servicios AWS. SGE act\'ua
+como capa de eficiencia sobre los controles de inspecci\'on (filas destacadas).}
+\label{tab:top10}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}p{0.5cm} p{3.6cm} p{5.3cm} p{6.2cm}@{}}
+\toprule
+\textbf{\#} & \textbf{Ataque} & \textbf{Descripci\'on} & \textbf{Mitigaci\'on con servicios AWS} \\
+\midrule
+1 & Credenciales/IAM comprometidas & Robo o abuso de claves y roles con exceso de privilegios. & IAM (m\'inimo privilegio), IAM Access Analyzer, IAM Identity Center + MFA, GuardDuty. \\
+2 & Configuraciones err\'oneas (S3 y otros) & Recursos o \emph{buckets} expuestos p\'ublicamente por error. & S3 Block Public Access, AWS Config, Security Hub, Trusted Advisor. \\
+3 & Denegaci\'on de servicio (DDoS) & Saturaci\'on volum\'etrica o de capa 7 del servicio. & AWS Shield (Std/Adv), CloudFront, Route~53, reglas \emph{rate-based} de WAF. \\
+\rowcolor{green!8}
+4 & \textbf{Inyecci\'on (SQLi/CMDi) y \emph{prompt injection}} & Payloads maliciosos que manipulan la consulta o el modelo de lenguaje. & AWS WAF (reglas gestionadas SQLi), API Gateway (\emph{throttling}), Bedrock Guardrails, validaci\'on en Lambda. \emph{[SGE: filtrado estoc\'astico]} \\
+5 & Exposici\'on/fuga de datos sensibles & Extracci\'on de datos confidenciales no cifrados. & Amazon Macie, AWS KMS (cifrado), cifrado de S3, VPC endpoints. \\
+6 & Secuestro de cuenta y \emph{phishing} & Robo de sesi\'on o suplantaci\'on de identidad. & Amazon Cognito, IAM Identity Center + MFA, GuardDuty, CloudTrail. \\
+7 & APIs inseguras / autenticaci\'on rota & Autorizaci\'on deficiente en endpoints expuestos. & API Gateway (\emph{authorizers}), Amazon Cognito, Verified Permissions, AWS WAF. \\
+8 & Amenazas internas / abuso de privilegios & Uso indebido de accesos leg\'itimos. & CloudTrail, IAM Access Analyzer, GuardDuty, AWS Config, m\'inimo privilegio. \\
+9 & Malware y \emph{cryptojacking} & Compromiso de c\'omputo para miner\'ia o persistencia. & GuardDuty (Malware Protection), Amazon Inspector, Systems Manager Patch Manager. \\
+10 & SSRF y robo de metadatos & Abuso del servicio de metadatos de instancia. & IMDSv2, AWS WAF, \emph{security groups}, segmentaci\'on de VPC. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{El estado del arte aplicado a SGE}
+\label{sec:sota-sge}
+SGE rompe el paradigma reactivo y ``siempre al m\'aximo'' descrito arriba en tres
+sentidos. \textbf{(i) De reactivo a proactivo-econ\'omico:} en lugar de decidir tras
+detectar, SGE decide \emph{a priori} qu\'e peticiones merecen el gasto de detecci\'on,
+tratando la inspecci\'on profunda como un recurso escaso. \textbf{(ii) Filtrado
+estoc\'astico de inyecci\'on:} para el tr\'afico sospechoso ---en particular los payloads
+compatibles con inyecci\'on de prompts o de c\'odigo--- SGE no aplica una regla fija y
+explotable, sino una \emph{pol\'itica aleatorizada} derivada del equilibrio de Nash, que
+un adversario racional no puede eludir de forma sistem\'atica. As\'i, la mayor\'ia del
+tr\'afico malicioso ruidoso se neutraliza en el borde y solo la fracci\'on sigilosa
+escala al motor costoso. \textbf{(iii) Descarga del servidor principal:} al resolver el
+$94.65\%$ de las peticiones en la capa Edge de baja potencia, SGE reduce dr\'asticamente
+la carga sobre las funciones de inspecci\'on profunda del n\'ucleo, con el consiguiente
+ahorro de c\'omputo y de emisiones. En s\'intesis, SGE no sustituye a los controles de la
+Tabla~\ref{tab:top10}, sino que los dota de una capa de \emph{eficiencia energ\'etica}
+ausente en el estado del arte.
 
 \section{Marco de C\'omputo Verde}
 \label{sec:green}
@@ -291,6 +395,61 @@ r\'egimen de baja energ\'ia.}
 \label{fig:pareto}
 \end{figure}
 
+\section{An\'alisis T\'ecnico y Viabilidad como \emph{Startup}}
+\label{sec:viability}
+\subsection{Manejo de tr\'afico masivo y carga de servidores}
+El valor operativo de SGE reside en su capacidad de \emph{descarga} (\emph{offload}).
+La ruta r\'apida del Edge tiene complejidad efectiva $O(1)$ por petici\'on ---extracci\'on
+de m\'etricas ligeras y, a lo sumo, la resoluci\'on de un juego bimatriz $2\times2$ cuya
+soluci\'on es cerrada (Secci\'on~\ref{sec:math}) y se computa en microsegundos--- de modo
+que el filtro puede saturar el ancho de banda de red sin convertirse en cuello de
+botella. Al resolver el $94.65\%$ del tr\'afico en esta capa, el sistema act\'ua como un
+mecanismo de \emph{load shedding} inteligente: protege a las funciones de inspecci\'on
+profunda del n\'ucleo de los picos de tr\'afico y de los ataques de agotamiento de
+recursos, estabilizando la latencia de cola (\emph{tail latency}) y permitiendo un
+escalado horizontal m\'as econ\'omico. En una arquitectura cloud t\'ipica, la capa Edge se
+materializa como \emph{middleware} sin estado replicable (p.\,ej.\ un filtro en la
+pasarela de API o una funci\'on de borde), mientras que el motor de inspecci\'on ---y su
+costo--- se invoca bajo demanda.
+
+\subsection{Elecci\'on de lenguajes de programaci\'on}
+La naturaleza de dos capas sugiere una arquitectura \emph{poligl\'ota} alineada con las
+pr\'acticas cloud-native. Para la \textbf{pasarela/Edge} recomendamos \textbf{Go}: su
+modelo de concurrencia basado en \emph{goroutines}, su recolector de basura de baja
+latencia, su compilaci\'on a un binario est\'atico y su reducido consumo de memoria lo
+hacen id\'oneo para servicios de red de alto rendimiento ---es el lenguaje de sistemas
+cloud de referencia (Kubernetes, Envoy, Traefik, Cloudflare). Para el \textbf{motor
+matem\'atico} recomendamos \textbf{Python}: su ecosistema cient\'ifico (NumPy,
+SciPy) permite expresar y calibrar el modelo de Nash con rapidez, y es el estilo del
+prototipo actual. La comunicaci\'on entre capas puede resolverse v\'ia \texttt{gRPC} o,
+dado que el equilibrio $2\times2$ es de forma cerrada, reimplementando la ruta caliente
+directamente en Go y reservando Python para la calibraci\'on \emph{offline} de
+par\'ametros y la experimentaci\'on. Esta separaci\'on ---Go para el plano de datos,
+Python para el plano de an\'alisis--- maximiza tanto el rendimiento como la velocidad de
+iteraci\'on.
+
+\subsection{Viabilidad como modelo de negocio (B2B SaaS)}
+SGE es adaptable a un producto \emph{B2B SaaS} con una propuesta de valor doble y poco
+habitual en el mercado de seguridad. \textbf{(1) Reducci\'on de costos de
+infraestructura:} al recortar hasta un $\sim\!86\%$ el c\'omputo de inspecci\'on, el
+cliente reduce directamente su factura de CPU/serverless, un argumento comercial
+inmediato y medible. \textbf{(2) Cumplimiento ambiental (ESG):} la reducci\'on de la
+huella de carbono es \emph{cuantificable y auditable} (Secci\'on~\ref{sec:results}),
+lo que la convierte en una palanca concreta para los reportes de sostenibilidad ---en
+alcance~2 y~3--- exigidos por marcos regulatorios crecientes y por metodolog\'ias como
+la Software Carbon Intensity \cite{gsf}. La entrega puede realizarse como \emph{plugin}
+de pasarela o funci\'on de borde (p.\,ej.\ compatible con entornos serverless o de
+\emph{edge}), minimizando la fricci\'on de integraci\'on, con un modelo de tarificaci\'on
+por mill\'on de peticiones o por ahorro compartido. El p\'ublico objetivo natural son las
+empresas ``API-first'' y, de forma destacada, los proveedores de aplicaciones basadas
+en modelos de lenguaje, para quienes la inyecci\'on de prompts es una amenaza emergente y
+el costo por inspecci\'on es especialmente alto. \textbf{Conclusi\'on de viabilidad:}
+SGE combina un ahorro de costos tangible con una ventaja de cumplimiento ESG y una
+defensa t\'ecnica diferenciada (la pol\'itica estoc\'astica \'optima), lo que lo hace
+viable como \emph{startup}; los principales riesgos a validar son la precisi\'on de
+detecci\'on en tr\'afico real y la facilidad de integraci\'on en las arquitecturas de los
+clientes.
+
 \section{Discusi\'on}
 \label{sec:discussion}
 Los resultados muestran que la teor\'ia de juegos es una herramienta eficaz de
@@ -339,6 +498,15 @@ Game-Theoretic Approach}. Cambridge University Press, 2010.
 \bibitem{manshaei} M.~H.~Manshaei, Q.~Zhu, T.~Alpcan, T.~Ba\c{s}ar, and J.-P.
 Hubaux. \emph{Game theory meets network security and privacy}. ACM Computing Surveys
 (CSUR), 45(3):1--39, 2013.
+\bibitem{owaspllm} OWASP Foundation. \emph{OWASP Top 10 for Large Language Model
+Applications}. 2023--2025.
+\bibitem{owaspapi} OWASP Foundation. \emph{OWASP API Security Top 10}. 2023.
+\bibitem{csa} Cloud Security Alliance. \emph{Top Threats to Cloud Computing: The
+Pandemic Eleven}. 2022.
+\bibitem{awswaf} Amazon Web Services. \emph{AWS Well-Architected Framework: Security
+Pillar}. 2023.
+\bibitem{gsf} Green Software Foundation. \emph{Software Carbon Intensity (SCI)
+Specification}. 2024.
 \end{thebibliography}
 
 \end{document}
