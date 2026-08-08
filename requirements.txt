@@ -1,0 +1,5 @@
+# Core prototype runs on the Python standard library only (no install required).
+# The extras below are OPTIONAL and only used for nicer analysis/plots.
+# Install with:  pip install -r requirements.txt
+numpy>=1.24
+matplotlib>=3.7
